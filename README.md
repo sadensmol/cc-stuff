@@ -48,26 +48,12 @@ Open **Manage plugins → sadensmol** — the installed version is shown next to
 
 ### Update to the latest version
 
-Run these in Claude Code, in order:
-
 ```
-/plugin marketplace update sadensmol      # check the marketplace for a newer version
-/plugin uninstall sadensmol@sadensmol     # remove the current version
-/plugin install sadensmol@sadensmol       # install the latest version
+/plugin marketplace update sadensmol      # pull the latest version from Git
 /reload-plugins                           # apply it in the current session
 ```
 
-After `marketplace update`, you can open `/plugin` → **Browse marketplaces → sadensmol** to see the available version before installing.
-
-> If the version doesn't change after this, your client didn't pull the newest copy. Force a clean refresh by removing and re-adding the marketplace, then reinstall:
->
-> ```
-> /plugin uninstall sadensmol@sadensmol
-> /plugin marketplace remove sadensmol
-> /plugin marketplace add sadensmol/cc-stuff
-> /plugin install sadensmol@sadensmol
-> /reload-plugins
-> ```
+That's it — no need to uninstall or re-add anything. After `marketplace update` you can open `/plugin` → **Manage plugins → sadensmol** to confirm the new version.
 
 ### Remove
 
