@@ -1,0 +1,18 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "sadensmol",
+  "description": "Marketplace for sadensmol personal skills",
+  "owner": {
+    "name": "saden"
+  },
+  "plugins": [
+    {
+      "name": "sadensmol",
+      "description": "Personal skills under the sadensmol namespace",
+      "source": "./sadensmol",
+      "author": {
+        "name": "saden"
+      }
+    }
+  ]
+}
