@@ -1,0 +1,19 @@
+{
+  "name": "cc-stuff",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "remoteUser": "claude",
+  "workspaceFolder": "/home/claude/work",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/home/claude/work,type=bind",
+  "mounts": [
+    // Subscription login persists in a named Docker volume (not a host path).
+    "source=cc-stuff-claude-auth,target=/home/claude/.claude,type=volume"
+  ],
+  "customizations": {
+    "vscode": {
+      "extensions": ["anthropic.claude-code"]
+    }
+  },
+  "postCreateCommand": "claude --version"
+}

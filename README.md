@@ -38,43 +38,42 @@ Alternatively, run `/plugin`, open **Browse marketplaces → sadensmol**, and in
 - The skills activate automatically based on your prompt and working context — e.g. ask to "review my code", "write a Go service", or "write a blog post" and the matching skill kicks in.
 - You can also invoke a skill explicitly, e.g. `/code-review`.
 
-### Updating the plugin (the reliable way)
-
-Two caveats make naive updates silently fail:
-
-- **Plugins are cached by version.** Claude Code stores each plugin under `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`. Push new files but keep the same `version` and the manager keeps serving the old cache. So **always bump `version` in `plugin.json`** when you change plugin files.
-- **`/plugin marketplace update` does not always re-fetch from Git.** In some setups it leaves the local marketplace clone on the old commit, so nothing downstream changes. The operation that *always* re-clones fresh from GitHub is `marketplace add`. So the dependable refresh is **remove + re-add**, not update.
-
-**1. As the plugin author — bump the version and push:**
-
-```bash
-# edit sadensmol/.claude-plugin/plugin.json → bump "version" (e.g. 0.1.2 → 0.1.3)
-git add -A && git commit -m "..." && git push origin main
-```
-
-**2. In Claude Code — remove and re-add (forces a fresh clone), then reinstall:**
+### Check which version you have
 
 ```
-/plugin uninstall sadensmol@sadensmol     # drop the old cached plugin
-/plugin marketplace remove sadensmol      # drop the stale marketplace clone
-/plugin marketplace add sadensmol/cc-stuff   # fresh git clone — pulls your latest commit
-/plugin install sadensmol@sadensmol       # install the new version
-/reload-plugins                           # re-register hooks/skills in this session
+/plugin
 ```
 
-**Verify it worked** — the installed record should show your new version and commit:
+Open **Manage plugins → sadensmol** — the installed version is shown next to the plugin.
 
-```bash
-grep -E '"version"|"gitCommitSha"' ~/.claude/plugins/installed_plugins.json
-```
+### Update to the latest version
 
-> If your environment's `/plugin marketplace update sadensmol` *does* advance the clone (check with `git -C ~/.claude/plugins/marketplaces/sadensmol log --oneline -1`), you can use that instead of the remove/re-add pair. When in doubt, remove + re-add always works.
-
-### Removing
+Run these in Claude Code, in order:
 
 ```
-/plugin uninstall sadensmol@sadensmol
-/plugin marketplace remove sadensmol
+/plugin marketplace update sadensmol      # check the marketplace for a newer version
+/plugin uninstall sadensmol@sadensmol     # remove the current version
+/plugin install sadensmol@sadensmol       # install the latest version
+/reload-plugins                           # apply it in the current session
+```
+
+After `marketplace update`, you can open `/plugin` → **Browse marketplaces → sadensmol** to see the available version before installing.
+
+> If the version doesn't change after this, your client didn't pull the newest copy. Force a clean refresh by removing and re-adding the marketplace, then reinstall:
+>
+> ```
+> /plugin uninstall sadensmol@sadensmol
+> /plugin marketplace remove sadensmol
+> /plugin marketplace add sadensmol/cc-stuff
+> /plugin install sadensmol@sadensmol
+> /reload-plugins
+> ```
+
+### Remove
+
+```
+/plugin uninstall sadensmol@sadensmol     # remove the plugin
+/plugin marketplace remove sadensmol      # (optional) also remove the marketplace
 ```
 
 ## What's inside
