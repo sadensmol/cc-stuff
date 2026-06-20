@@ -38,11 +38,39 @@ Alternatively, run `/plugin`, open **Browse marketplaces → sadensmol**, and in
 - The skills activate automatically based on your prompt and working context — e.g. ask to "review my code", "write a Go service", or "write a blog post" and the matching skill kicks in.
 - You can also invoke a skill explicitly, e.g. `/code-review`.
 
-### Updating / removing
+### Updating the plugin (the reliable way)
+
+Claude Code caches each plugin **by version** under `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`. If you push new plugin files but keep the same `version`, the manager keeps serving the old cache — `/plugin marketplace update` and `/reload-plugins` will **not** pick up your changes. So every update has two halves: bump the version, then reinstall.
+
+**1. As the plugin author — bump the version and push:**
+
+```bash
+# edit sadensmol/.claude-plugin/plugin.json → bump "version" (e.g. 0.1.1 → 0.1.2)
+git add -A && git commit -m "..." && git push origin main
+```
+
+**2. In Claude Code — refresh the catalog, then reinstall:**
 
 ```
-/plugin marketplace update sadensmol   # pull the latest from Git
-/plugin uninstall sadensmol@sadensmol  # remove the plugin
+/plugin marketplace update sadensmol      # re-pull marketplace metadata from Git
+/plugin uninstall sadensmol@sadensmol     # drop the old cached version
+/plugin install sadensmol@sadensmol       # fetch the new version into a fresh cache
+/reload-plugins                           # re-register hooks/skills in this session
+```
+
+> Why uninstall + install rather than just `/reload-plugins`? Reload re-reads the **already-cached** version. The uninstall→install cycle is what forces a fresh fetch of the new version from Git. The version bump in step 1 guarantees the new install lands in a new cache directory instead of reusing the old one.
+
+**Verify it worked** — the installed record should show your new version and commit:
+
+```bash
+grep -E '"version"|"gitCommitSha"' ~/.claude/plugins/installed_plugins.json
+```
+
+### Removing
+
+```
+/plugin uninstall sadensmol@sadensmol
+/plugin marketplace remove sadensmol      # optional: also drop the marketplace
 ```
 
 ## What's inside
