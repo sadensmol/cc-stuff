@@ -177,6 +177,28 @@ func NewHTTPClient(ctx context.Context, tokenURL, clientID, ...) *http.Client { 
 func NewHTTPClient(ctx context.Context, tokenURL, clientID, ...) *http.Client {
 ```
 
+**Do NOT narrate an error-handling / control-flow decision the code already
+shows.** A `log`-and-continue or a `return err` IS the decision; a paragraph
+above it restating "we don't fail here because X is primary, but we don't stay
+silent either" is pure noise — delete it. The handful of words in the log
+message already say what happened; the choice to log-and-continue vs return is
+visible in the code.
+
+```go
+// Bad - three lines explaining what the next two lines plainly do
+if err := h.images.EnsureCached(ctx, games); err != nil {
+    // the games list is the primary payload, so a failure to record the image
+    // sources must not fail the partner's request — but it can't be silent
+    // either: the handed-out proxy URLs will 404 until the next game list.
+    log.Error().Ctx(ctx).Err(err).Msg("cannot record image sources for game list")
+}
+
+// Good - the log + the continue say it themselves
+if err := h.images.EnsureCached(ctx, games); err != nil {
+    log.Error().Ctx(ctx).Err(err).Msg("cannot record image sources for game list")
+}
+```
+
 ### Formatting
 
 **NEVER format code manually.** Never use gofmt or any formatting tool. Always rely on IDE formatting. Your job is to write code, not format it.
@@ -472,6 +494,33 @@ if err != nil {
     return err  // Middleware logs
 }
 ```
+
+**NEVER silently discard an error with `_ =` (MUST FOLLOW).** Every error is
+either **returned** or **logged** — never dropped. `_ = doThing()` throws away
+the one signal that something failed; even for best-effort work (cache writes,
+fire-and-forget, cleanup), if you choose not to return the error you MUST log it
+at the call site. The two rules compose: return XOR log, never both, never
+neither.
+
+```go
+// Bad — error swallowed; a failed cache write is now invisible
+_ = s.cache.Save(ctx, key, &v)
+
+// Good — best-effort, not returned, so log it
+if err := s.cache.Save(ctx, key, &v); err != nil {
+    log.Error().Ctx(ctx).Err(err).Msgf("cannot cache value for %s", key)
+}
+
+// Good — caller cares about the failure, so return it (don't log here)
+if err := s.cache.Save(ctx, key, &v); err != nil {
+    return fmt.Errorf("save value for %s: %w", key, err)
+}
+```
+
+This is also why a shared helper that *swallows* errors internally (e.g. a cache
+`Save` that logs and returns nothing) is a smell: callers that need to know the
+write landed can't. Make such a helper **return** the error and let each caller
+decide return-vs-log.
 
 ### Nil Safety — validate pointers before accessing (MUST FOLLOW)
 
