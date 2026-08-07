@@ -388,24 +388,35 @@ explicitly.
 **SINGLE INSTANCE — plannotator allows only ONE live instance at a time (MUST FOLLOW).**
 plannotator supports a **single** running instance **total** — `review` and
 `annotate` **share that one slot**. Launching a second while one is live
-**silently breaks the first** (the already-open tab stops working) — this is a
-hard plannotator constraint, not just tab clutter. So never have two open at once:
-not review+review, not annotate+annotate, and **not review+annotate together**.
-Always check whether one is already running before launching (either mode); never
-kill-then-immediately-relaunch in a retry loop. The launch blocks until submit — a
-completion/`failed` notification usually just means the user closed the tab, NOT
-that the cwd was wrong; do not react by relaunching. **The one sanctioned
-kill-then-relaunch is the auto-refresh below — a deliberate content refresh, not a
-retry.**
+**silently breaks the first** (the already-open tab stops working and any
+in-progress annotations in it are LOST) — a hard plannotator constraint, not just
+tab clutter. So never have two open at once: not review+review, not
+annotate+annotate, and **not review+annotate together**.
+
+**NEVER force-close another plannotator instance (MUST FOLLOW).** Do NOT `pkill`
+/ kill / `session close` a running `review` or `annotate` to make room for a new
+one — the user may have unsubmitted annotations in it, and force-closing
+**discards all of that work**. Instead, whenever one is already open and you need
+a different one (or the same one refreshed): **ask the user to finish (submit) or
+close the current review/annotation, and WAIT until it is actually closed**
+(`pgrep` shows none) before launching. This holds even on an explicit
+"reopen"/"restart"/"refresh" — ask the user to close it first; never close it for
+them.
+
+The launch blocks until submit — a completion/`failed` notification usually just
+means the user closed the tab, NOT that the cwd was wrong; do not react by
+relaunching.
+
+Check whether one is already running before launching (either mode):
 
 ```bash
 pgrep -f "plannotator (review|annotate)" >/dev/null 2>&1 && echo "ALREADY_RUNNING" || echo "NONE"
 ```
 
-- **`ALREADY_RUNNING`** → do NOT launch another. Tell the user one is already
-  open (switch to that tab). Only on an explicit "restart"/"reopen" (or the tab is
-  gone): `pkill -f "plannotator (review|annotate)"` **once**, wait ~1s, launch
-  exactly one.
+- **`ALREADY_RUNNING`** → do NOT launch another and do NOT force-close it. Tell
+  the user a review/annotation is already open and **ask them to finish (submit)
+  or close it first**; wait until `pgrep` reports none, then launch exactly one.
+  Never `pkill` it yourself — that would lose their in-progress annotations.
 - **`NONE`** → launch exactly one instance, in the **mode chosen above**:
 
 ```bash
@@ -433,38 +444,31 @@ several at once; that is why multiple changed `.md` files force the
 - When it returns, address each annotation (keyed by `<repo>/<path>` in
   multi-repo for `review`), re-run if needed. No annotations = approved.
 
-### AUTO-REFRESH `annotate` after every doc edit (MUST FOLLOW)
+### `annotate` goes stale after a doc edit — ASK the user, never force-refresh (MUST FOLLOW)
 
 `plannotator annotate` reads the file **once at launch** — so any edit you make to
 that `.md` afterward leaves the open tab **stale**, showing the pre-edit content.
-Therefore: **whenever you edit a `.md` file that a running `annotate` is currently
-showing, automatically refresh that annotate — without being asked.** This is the
-sanctioned kill-then-relaunch exception to the SINGLE INSTANCE rule.
+But you must **never force-close the open `annotate` to refresh it** — the user may
+have unsubmitted annotations there, and killing it **loses that work** (see the
+SINGLE INSTANCE rule).
 
 - **Trigger:** you (via `Edit`/`Write`) changed the exact `.md` file the open
   `annotate` was launched on. Remember that path when you launch (`annotate
   <chosen.md>`), so you know which edits are relevant.
-- **Debounce — refresh ONCE per turn, at the END.** Do NOT relaunch after each
-  individual `Edit`. Make **all** the doc edits for this turn first, then refresh a
-  single time. Relaunching mid-batch just thrashes tabs.
-- **How (deliberate content refresh, not a retry):**
-
-```bash
-pkill -f "plannotator annotate" 2>/dev/null          # close the stale tab
-for i in 1 2 3 4 5; do pgrep -f "plannotator annotate" >/dev/null 2>&1 || break; done
-cd <worktree-base> && pwd && /Users/saden/.local/bin/plannotator annotate <same .md> &   # background, same file
-```
-
-- Relaunch on the **same** file the tab was showing (not a different `.md`). If your
-  edits were to a doc that ISN'T the open one, don't hijack the user's tab — leave
-  it and just tell them which file changed.
+- **Debounce:** make **all** the doc edits for this turn first, then handle it
+  once at the end — not after each individual `Edit`.
+- **What to do — tell the user, don't touch their tab:** report that you edited
+  `<file>`, so the open `annotate` is now showing stale content, and **ask them to
+  submit/close it when ready** so you can reopen it with the fresh content.
+  **Wait** until they've closed it (`pgrep -f "plannotator annotate"` shows none),
+  then relaunch `annotate` on the **same** file.
+- If your edits were to a doc that ISN'T the open one, don't touch the user's tab —
+  just tell them which file changed.
 - Only refresh a `plannotator **annotate**`; never convert an open annotate into a
   `review` (or vice-versa) as part of a refresh — mode is chosen by state, not by
   the refresh.
 - If NO `annotate` is running (the user closed it), a doc edit does **not** auto-open
   one — there's nothing to refresh; mention the doc changed and offer to reopen.
-- A `failed`/exit-144 notification from the killed background task is the expected
-  result of the `pkill`, not an error — do not react to it.
 
 ## `list` / `switch` — handled here (not delegated)
 
