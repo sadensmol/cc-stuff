@@ -385,14 +385,18 @@ merges, e2e), cleanup must not be mentioned at all — the natural next step is
 nothing is left to merge and nothing is left to do, or when the user asks for it
 explicitly.
 
-**SINGLE INSTANCE — never spawn a second plannotator (MUST FOLLOW).** Every
-`plannotator review`/`annotate` opens a new browser tab, so blindly relaunching
-piles up tabs. Check whether one is already running before launching (either
-mode); never kill-then-immediately-relaunch in a retry loop. The launch blocks
-until submit — a completion/`failed` notification usually just means the user
-closed the tab, NOT that the cwd was wrong; do not react by relaunching. **The one
-sanctioned kill-then-relaunch is the auto-refresh below — a deliberate content
-refresh, not a retry.**
+**SINGLE INSTANCE — plannotator allows only ONE live instance at a time (MUST FOLLOW).**
+plannotator supports a **single** running instance **total** — `review` and
+`annotate` **share that one slot**. Launching a second while one is live
+**silently breaks the first** (the already-open tab stops working) — this is a
+hard plannotator constraint, not just tab clutter. So never have two open at once:
+not review+review, not annotate+annotate, and **not review+annotate together**.
+Always check whether one is already running before launching (either mode); never
+kill-then-immediately-relaunch in a retry loop. The launch blocks until submit — a
+completion/`failed` notification usually just means the user closed the tab, NOT
+that the cwd was wrong; do not react by relaunching. **The one sanctioned
+kill-then-relaunch is the auto-refresh below — a deliberate content refresh, not a
+retry.**
 
 ```bash
 pgrep -f "plannotator (review|annotate)" >/dev/null 2>&1 && echo "ALREADY_RUNNING" || echo "NONE"

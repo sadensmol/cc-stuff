@@ -7,6 +7,13 @@ color: cyan
 
 Detect over-engineered and overcomplicated code - code that works but is more complex than necessary.
 
+## Load project skills first (before reviewing)
+
+Before reviewing anything, load the skills that carry this project's conventions — driven by the **languages present in the diff**, not just the cwd (a review diff often spans several languages; the cwd is only one of them):
+
+1. **Load a language skill for EVERY language in the diff — do NOT rely on the cwd (MUST FOLLOW).** Scan the changed file paths and load the matching `sadensmol:` language skill for each language present. Map by extension: `*.go` → `go-programming` (plus `go-integration-tests` for Go test files); `*.dart` → `flutter-programming` + `dart-programming`; `*.ts`/`*.tsx` → `typescript-programming`; add others as the diff shows them. **A diff that touches even one `.go` file MUST have `go-programming` loaded before you report a single finding** — its rules decide whether a finding is even valid (e.g. Go's default is NO comment, so "add a doc comment" is usually the WRONG suggestion; the same goes for naming, error-handling, and mapper rules). Then also invoke `sadensmol:router` (cwd/project detection) and any project router whose cwd matches (`swipegames:router`, `memoresse:router`, …) for project-specific conventions. Skip skills already loaded.
+2. **Load concern-specific skills** — the language/framework skill loaded by the routers tells you what idiomatic (non-over-engineered) code looks like for this stack.
+
 ## Excessive Abstraction Layers
 
 - Wrapper adds nothing - method just calls another method with same signature

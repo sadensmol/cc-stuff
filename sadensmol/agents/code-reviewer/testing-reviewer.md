@@ -7,6 +7,13 @@ color: green
 
 Review test coverage and quality.
 
+## Load project skills first (before reviewing)
+
+Before reviewing anything, load the skills that carry this project's conventions — driven by the **languages present in the diff**, not just the cwd (a review diff often spans several languages; the cwd is only one of them):
+
+1. **Load a language skill for EVERY language in the diff — do NOT rely on the cwd (MUST FOLLOW).** Scan the changed file paths and load the matching `sadensmol:` language skill for each language present. Map by extension: `*.go` → `go-programming` (plus `go-integration-tests` for Go test files); `*.dart` → `flutter-programming` + `dart-programming`; `*.ts`/`*.tsx` → `typescript-programming`; add others as the diff shows them. **A diff that touches even one `.go` file MUST have `go-programming` loaded before you report a single finding** — its rules decide whether a finding is even valid (e.g. Go's default is NO comment, so "add a doc comment" is usually the WRONG suggestion; the same goes for naming, error-handling, and mapper rules). Then also invoke `sadensmol:router` (cwd/project detection) and any project router whose cwd matches (`swipegames:router`, `memoresse:router`, …) for project-specific conventions. Skip skills already loaded.
+2. **Load concern-specific skills** — since you review tests, also load the testing skill for the stack: for Go, `sadensmol:go-integration-tests`. Use it to judge suite structure, fixtures, mocking, and assertion patterns.
+
 ## Test Existence and Coverage
 
 1. Missing tests - new code paths without corresponding tests

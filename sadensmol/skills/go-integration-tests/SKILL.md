@@ -17,11 +17,147 @@ Critical guidelines before creating any tests:
 3. **NEVER touch the code when writing tests** - If code changes are needed, ask first
 4. **Use testify/suite** - All integration tests use testify/suite framework
 5. **Fixtures for read-only tests ONLY** - If test modifies data, use dynamic data with defer cleanup
-6. **NEVER use time.Sleep** - Always use `require.Eventually` for async operations
+6. **Prefer `require.Eventually` over `time.Sleep`** for async operations — poll for the expected state rather than sleeping a fixed time. The ONLY exception is proving a background action did NOT happen (a negative/stability assertion), which `Eventually` cannot express: there you must let a fixed number of worker cycles pass with `time.Sleep` and then assert nothing changed. See [Proving "it did NOT happen"](#proving-it-did-not-happen) below.
 7. **NEVER modify mock server files** (ledger-server.go, integration-server.go, etc.) — these are shared test infrastructure. If a nil pointer panic occurs because a mock func is nil, set up the mock expectation in the test BEFORE the action that triggers the call. For background processors, move mock setup before the action that creates data the processor picks up.
 8. **NEVER set up catch-all mocks in `SetupSuite`** — multiple test suites run in parallel sharing the same DB. Catch-all mocks let one suite's background processor steal records from another suite. Set up mocks only in specific tests that need them. Use a suite helper method to avoid duplication, called explicitly per-test.
 9. **NEVER call `wiremock.Reset()` (or any global mock reset) on a shared WireMock server** — see [WireMock: shared server, no global Reset](#wiremock-shared-server-no-global-reset) below.
 10. **NEVER use `TestMain` or `init()` for test setup** — put one-time setup in the suite's `SetupSuite()` (or `SetupTest()` for per-test setup), which runs before the suite's methods. Example: to capture logs, point the global logger at a buffer inside `SetupSuite()`, not in a `TestMain`. If two parallel suites both need it, each gets its own `SetupSuite()`.
+11. **ALWAYS use ONLY test repositories in test code — NEVER a production repository.** Every DB read/write from a test (setup, seeding, verification, cleanup) goes through the `tests/repository` (`repository_test.*`) types. Test code MUST NOT instantiate or call a production `internal/repository` type — not for setup and not to "verify a production query." See [Never call production repositories from tests](#never-call-production-repositories-from-tests) below.
+12. **Reproduce the reported bug with the FEWEST entities, and model the dependency's real guard.** Write the simplest test that triggers the *reported* failure — don't add extra records/txns/actors to fit your theory of the cause, and don't use a fake that's more lenient than the real dependency. See [Reproduce minimally; model the real invariant](#reproduce-minimally-model-the-real-invariant) below.
+13. **Add methods to the EXISTING feature test file — never a parallel one-method file.** When a `*_test.go` already covers the feature (its suite embeds the API suite, has `SetupSuite`, sibling test methods), add your method to that file. A new file that re-uses the same suite type also duplicate-declares any method you copy. This is the concrete form of guideline #1.
+14. **Write NO comments in test code by default (MUST FOLLOW).** The test method name + the arrange/act/assert body already say what the test does — a doc comment like `// TestFooDoesBar verifies that foo does bar` that restates the name is pure noise; delete it. Do NOT narrate the scenario ("open then close, then assert…") — the code shows it. Add a comment ONLY for a genuinely non-obvious *why* a competent reader would otherwise get wrong (a race the sleep guards, an ordering constraint, why a fixture is shaped oddly), and keep it to that one fact. Same rule as `go-programming`'s Comments section — it applies to `*_test.go` too, including per-test doc comments and inline narration.
+
+## Black-box only: control the world, not the service's internals
+
+Integration tests are **black-box**: drive the service-under-test only through its
+public API (gRPC/HTTP client, queue) and assert on what comes out — responses,
+logs (`LogBuffer`), and DB state read via test repositories. Never reach inside the
+service to steer its control flow.
+
+**Allowed — you own the world AROUND the service:**
+- **External-dependency mocks** (gRPC mock servers like `ledgerSrv`/`intSrv`,
+  WireMock): set a return value, return an error, or make them **hang/delay**.
+  They're doubles for *external* services, so blocking one just simulates a slow/
+  failing downstream — still black-box. E.g. a cancellation test blocks
+  `ledgerSrv.EnsureAccountFunc` on a channel, cancels the request, and asserts the
+  boundary logged the cancellation at warn — legitimate.
+- **Preconditions via real state:** seed rows through **test repositories**, hold a
+  real **Redis lock/lease** via a test repository/API, create **test sessions**.
+
+**Forbidden — breaks black-box:**
+- Reassigning or stubbing a method on the service's **own** internals (its
+  usecases/services/repositories) to force a path or emulate a delay. If the test
+  needs the service to block/branch, induce it through a real dependency (a hung
+  external mock, a held redis lock, seeded data) — never by patching the service.
+
+Rule of thumb: mutating a **mock of something the service calls out to** = fine;
+mutating **the service's own code** = not a black-box test.
+
+## Reproduce minimally; model the real invariant
+
+When writing a test that reproduces a bug (especially a red test before a fix), two failure modes waste everyone's time:
+
+**1. Over-engineering the scenario to fit your theory of the cause.** Reproduce the *reported* behavior with the fewest entities. If the report is "one operation fails and the account is stuck," the test is **one** record where **one** call fails — not two records where the first blocks the second. Reaching for extra entities (a second txn/actor/record) to force the failure is a smell that you're testing your mental model of the cause, not the reported bug. Build the simplest thing that triggers it; add an entity only when the simplest form genuinely can't reproduce it.
+
+**2. A fake that's more lenient than the real dependency — it hides the bug (false green).** A red test only means something if the fake enforces the same guard the real dependency does. When the behavior under test depends on a dependency's **lock / reservation / uniqueness / gate / constraint**, the per-test fake func MUST model that guard, or the test passes for the wrong reason and you "prove" a bug that's still there.
+
+```go
+// Bad — fake always lets the reserve succeed, so the retry never hits the real
+// gate. The deadlock is invisible; the test is falsely green.
+s.ledgerSrv.WithdrawBonusBalanceStartFunc = func(ctx, req) (*Resp, error) {
+    return &Resp{...}, nil   // ❌ no reservation state, no "already in progress"
+}
+
+// Good — model the real single-slot guard in the closure (minimal state).
+var reserved int64
+s.ledgerSrv.WithdrawBonusBalanceStartFunc = func(ctx, req) (*Resp, error) {
+    if reserved > 0 {                                   // the real gate
+        return nil, fmt.Errorf("already in progress: reserved %d", reserved)
+    }
+    reserved = req.Amount
+    return &Resp{...}, nil
+}
+s.ledgerSrv.WithdrawBonusBalanceFinishFunc = func(ctx, req) (*Resp, error) {
+    reserved = 0
+    return &Resp{...}, nil
+}
+```
+
+Keep the modeled state minimal — plain `int64`/`bool` vars, scoped to the one account/key the test owns (filter other keys with `"not found"`, like the sibling tests). No `sync.Mutex` by default: a background processor handles records sequentially in one goroutine, so the fake funcs never run concurrently, and sibling tests use plain flags. Add synchronization only if the TEST goroutine also reads the fake's state (e.g. polling it in `Eventually`) — and prefer asserting on DB state via the test repo instead, which removes that need.
+
+**Assert the DESIRED outcome, not the current broken behavior.** The red test asserts what *should* happen (the operation recovers / completes), so it fails now and flips green once the fix lands. To make the flip automatic, arrange the transient failure to eventually succeed (e.g. fake fails the first call, succeeds after) — pre-fix the guard stays stuck so it never reaches the success; post-fix it recovers and completes.
+
+## The expected-value oracle must be an INDEPENDENT implementation
+
+When a test computes an expected value to assert against (an oracle), that
+computation MUST be written independently in the test — **never** call the
+production function/formula it is checking. The point of the oracle is to catch a
+regression in the production logic; if the test derives its expectation from the
+same production code, it's a tautology that stays green even when the production
+formula is wrong. **Do not "de-duplicate" the oracle** — and never export a
+production function just so a test can reuse it for this. Duplication between the
+test oracle and production is deliberate and correct here.
+
+```go
+// Good — the integration test re-derives the expected win itself, so a broken
+// production calcWinAmount makes the balance assertion fail.
+expectedWin := 0
+if selected == resultMult {
+    mult100 := int64(math.Round(float64(resultMult) * 100))
+    expectedWin = int(int64(bet) * mult100 / 100)
+}
+expectedBalance := prevBalance - bet + expectedWin
+s.Require().Equal(expectedBalance, gotBalance)
+
+// Bad — oracle calls the very function under test; can never catch its bug.
+win, _ := usecase.CalcWinAmount(selected, resultMult, bet) // ❌ tautology
+s.Require().Equal(prevBalance-bet+win, gotBalance)
+```
+
+This is distinct from the DRY rule for production code: production stays DRY, but
+a verification oracle is intentionally a second, independent implementation.
+(A unit test of the formula itself still asserts hand-computed literals — same
+principle: the expected numbers are written by hand, not produced by the code.)
+
+## Never call production repositories from tests
+
+Test code talks to the DB **only** through the `tests/repository` test repos. A production repository (`internal/repository`) is production code exercised by the service/processor under test — the test harness must never construct one (`repository.NewX(db)`) or call its methods.
+
+**This includes verifying a production query.** It is tempting to assert a background worker's retry/selection query by calling it directly:
+
+```go
+// Bad — reaches into the production repo to check a query, and scans a shared,
+// parallel-populated table with a magic limit to find one row.
+rows, _ := s.refundRepository.GetFirstNotProcessedWithTestAndLimit(ctx, true, 100000) // ❌
+found := false
+for _, r := range rows { if r.TxID.UUID() == myTxID { found = true } }
+s.Require().False(found)
+```
+
+Two things are wrong: (1) it calls a production repo from a test, and (2) checking membership in a globally-shared list with a huge `LIMIT` is non-deterministic across parallel suites. Instead, verify the **observable behavior** the query drives, read via the **test** repo (see below).
+
+## Proving "it did NOT happen"
+
+To prove a background worker did NOT act on a row (e.g. a refund that must NOT be retried), don't call the selection query. Observe a side effect that the test repo can read. The cleanest signal is **`updated_at`**: every table with a `set_updated_at` BEFORE-UPDATE trigger bumps `updated_at` on every write, so each processing attempt advances it. A row that is processed once and then excluded keeps a **stable** `updated_at`; a retried row's `updated_at` keeps advancing.
+
+```go
+// process once, then record updated_at via the TEST repo
+s.Require().Eventually(func() bool {
+    r, e := s.fooTestRepository.GetByID(ctx, id)
+    return e == nil && r != nil && r.ResponseError != nil && *r.ResponseError == domain.ErrTerminal.Error()
+}, tests.RetryWaitTime, tests.EventuallyPollInterval, "expected it to be processed once")
+
+processed, _ := s.fooTestRepository.GetByID(ctx, id)
+firstUpdatedAt := *processed.UpdatedAt
+
+// let several worker cycles pass — a retried row would bump updated_at
+time.Sleep(tests.RetryWaitTime)
+
+after, _ := s.fooTestRepository.GetByID(ctx, id)
+s.Require().Equal(firstUpdatedAt, *after.UpdatedAt, "must not be retried (updated_at unchanged)")
+```
+
+This is the one place `time.Sleep` is correct — you are asserting the ABSENCE of a change over time, which `Eventually` cannot express. Reads still go through the test repo only.
 
 ## WireMock: shared server, no global Reset
 

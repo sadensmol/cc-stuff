@@ -50,7 +50,49 @@ func CreateUser(ctx context.Context, data CreateUserData) error
 
 Place the Data struct immediately above the method definition, not at the beginning of the file.
 
+### Struct Initialization
+
+**Use named-field struct literals and OMIT zero-value fields (MUST FOLLOW).**
+Never use positional struct literals for anything beyond a 1–2 field
+throwaway, and never spell out a field that equals its zero value (`nil`, `0`,
+`""`, `false`). The zero value is already the default — writing it is noise that
+hides the fields that actually carry information, and forces every row to change
+when a field is added.
+
+```go
+// Bad - positional literal, every field spelled out incl. zero values
+"AED":  {"United Arab Emirates Dirham", "د.إ", 2, nil, false, false, nil},
+"COP#": {"Milli Colombia Peso", "$", 2, conv.Pointer("COP"), false, false, conv.Pointer(1000)},
+
+// Good - named fields, zero values omitted
+"AED":  {Name: "United Arab Emirates Dirham", Symbol: "د.إ", DecimalPlaces: 2},
+"COP#": {Name: "Milli Colombia Peso", Symbol: "$", DecimalPlaces: 2,
+         IsFractionalFor: conv.Pointer("COP"), FractionalValue: conv.Pointer(1000)},
+```
+
+Why named + omit-zero:
+- **Readability**: only the meaningful, non-default fields appear, so a `#`
+  fractional currency visibly differs from a plain one.
+- **No positional fragility**: adding a struct field doesn't force a `, nil` /
+  `, 0` onto hundreds of existing literals (positional literals require every
+  field; named literals don't).
+- **Intent over default**: `IsCrypto: true` reads as a deliberate choice;
+  `false` in the 5th position reads as nothing.
+
+This applies to map-of-struct tables, test fixtures, config literals — anywhere
+a struct is constructed. The only acceptable positional literal is a tiny,
+stable 1–2 field type where every field is always set (e.g. `image.Point{x, y}`).
+A pointer field whose zero value (`nil`) means "not applicable" should be left
+out entirely, not set to `nil`.
+
 ### Comments
+
+**READ THIS FIRST — the #1 repeated violation.** No comment block above a query
+/ filter predicate, a struct-tag line, a migration DDL, or a single added
+condition. Do NOT "explain the WHERE clause", the new `AND x > 0`, or why a
+filter exists. If you just wrote ≥2 comment lines to justify one line of code,
+**delete them** — the code + names already say it. This is not a style nit; it
+is the most common thing that gets flagged in review.
 
 **HARD RULE — write NO comment by default.** Adding a comment is the exception
 that must be justified, not the habit. When you introduce a new type, function,
@@ -644,6 +686,46 @@ Rule of thumb: if you catch yourself writing `map[SomeID]SomeAttrs` to look up
 fixed, intrinsic attributes of `SomeID`, fold those attributes into the type
 instead.
 
+### Domain logic lives on the domain type, not a standalone helper (MUST FOLLOW)
+
+A predicate or derivation computed purely from a domain type's own fields belongs
+as a **method on that type**, not as a package-level function in the
+service/usecase layer that takes the value as a parameter. A free `foo(x, …)` that
+only reads `x`'s fields is misplaced behaviour — put it on `x`.
+
+Benefits: the call site reads as a domain statement, the logic is unit-testable in
+the domain package next to the type, and the caller's cyclomatic complexity drops
+(one method call instead of an inlined multi-condition expression — often the
+difference that keeps a function under the `gocyclo` limit).
+
+```go
+// Bad — behaviour over Bet's own fields parked as a service-layer helper.
+func winUnsettledLongerThan(bet *Bet, win *Win, maxAge time.Duration) bool {
+    anchor := bet.CreatedAt
+    if win != nil {
+        anchor = win.CreatedAt
+    }
+    return time.Since(anchor) > maxAge
+}
+// caller: if bet.SessionID.IsTest() && winUnsettledLongerThan(bet, win, maxAge) { … }
+
+// Good — a method on the domain type; the predicate is a Bet capability.
+func (b *Bet) IsStaleUnsettledTestWin(win *Win, maxAge time.Duration) bool {
+    if !b.SessionID.IsTest() {
+        return false
+    }
+    anchor := b.CreatedAt
+    if win != nil {
+        anchor = win.CreatedAt
+    }
+    return time.Since(anchor) > maxAge
+}
+// caller: if bet.IsStaleUnsettledTestWin(win, maxAge) { … }
+```
+
+Rule of thumb: if a helper's parameters are a domain value plus a couple of
+constants and its body only reads that value's fields, it's a method on the type.
+
 ### Model Separation
 
 Maintain strict separation between three model types:
@@ -880,7 +962,47 @@ func (d domainRefund) asModel() model.Refund {
 - Don't do work that wasn't requested - no "helpful" fixes
 - Keep it simple, stupid, and working with minimal requirements
 - DON'T add comments everywhere - only when truly needed
-- **Don't use named returns in long methods** - makes code less readable
+- **Named returns — avoid by default; when you must, follow the rules below (MUST FOLLOW).**
+  Default to **unnamed** results. Don't name results just to "document" them in a
+  long method — that's the readability cost the old rule warned about. There is
+  **one** legitimate reason to name them: letting a `defer` set the return value
+  (the canonical tx commit/rollback idiom). When that reason applies, obey all of:
+  - **All or none — Go forbids mixing.** `(T, err error)` doesn't compile; naming
+    one result forces naming every result.
+  - **Name them ALL meaningfully — never `_`-blank placeholders.** Writing
+    `(_ *Round, _ Balance, err error)` just to name the last one is an
+    anti-pattern (reviewers reject it). Give every result a real, descriptive
+    name, or leave them all unnamed. No single-letter result names either.
+  - **Always return explicitly in every branch — never a naked `return`.** Keep
+    `return round, balance, err` in each branch. The names exist *only* so the
+    `defer` can touch `err`; explicit returns keep the data flow visible so the
+    function isn't "magic". A bare `return` in a long function is the real
+    readability trap.
+  - **Compose, don't clobber.** When the defer sets the error, guard it so it
+    can't overwrite an error the body already returned:
+    `if commitErr := commit(); commitErr != nil && err == nil { err = commitErr }`.
+    An unconditional `err = commit()` would turn an already-failing return into a
+    false success.
+  - Naming results forces the body's first assignment to those vars from `:=` to
+    `=` (a named result is already declared) — `round, err = repo.Get(...)`, not
+    `:=`. `shadow`/`NoNewVar` will flag any you miss.
+
+  ```go
+  // canonical: defer sets err; all results named + meaningful; explicit returns
+  func (u Bet) Process(ctx context.Context, ...) (round *domain.Round, balance domain2.Balance, err error) {
+      round, err = u.roundService.ByConfigID(ctx, cfg.ID, cfg.CreatedAt) // '=', round is a named result
+      if err != nil {
+          return nil, domain2.Balance{}, err                            // explicit, not naked
+      }
+      defer func() {
+          if commitErr := commit(); commitErr != nil && err == nil {
+              err = commitErr                                           // compose: don't clobber a prior error
+          }
+      }()
+      ...
+      return round, balance, nil
+  }
+  ```
 - **NEVER create one-line wrapper functions** - if a helper just forwards its args to another function with nothing meaningful added (no logic, no defaults, no naming improvement), delete it and call the underlying function directly. Wrappers like `func badRequest(msg string) error { return domain2.NewBadRequestError(msg, nil) }` add indirection without value — readers now have to jump to the wrapper to learn it does nothing. Call `domain2.NewBadRequestError(msg, nil)` at the use site. This rule applies to all one-liners that only rename, re-order, or pad defaults onto an existing function.
 - **Don't extract 1–3 line helpers — inline them.** A tiny private helper (a one-liner condition, a 3-line guard/block) used at one or two call sites is not worth its own function. It just forces the reader to jump away and back to learn it does something trivial — a pointless context switch. Inline the code at each site instead. Extract a function ONLY when it earns it: real reusable logic shared across **3+ consumers** (rule of 3), or a genuine utility belonging in a common/shared package. "It appears twice" is not enough — duplicate the two lines. Example: a restore gate `if h.state.IsRestoring() && method != "ping" { sendError(...); return }` belongs inline at the dispatch site, not behind an `isRestoreExemptMethod(method)` / `rejectedByRestoreGate(msg)` helper. Also prefer inlining each site to exactly what's reachable there — don't carry a shared helper's dead conditions (e.g. checking for a method that can never arrive on that path) just to reuse it.
   - **Exception — type-to-type mapping is NOT covered by this rule.** The inline/rule-of-3 guidance is about trivial *code*; mapping one type to another is *architecture*. Whenever you convert between an API, domain, and persistence type, route it through a mapper method on a type alias (`toDomain()` / `toAPI()` / `asModel()`) — even a single-field, one-line conversion, even with only one call site. Don't inline a raw conversion (`fmt.Sprintf`, field copy, `string(x)`, struct literal) at the call site just because it's short. The mapper is the seam that keeps layers separated, makes the conversion grep-able, and gives the change one home when the type grows. Composition that produces a value belonging to a type (e.g. building an absolute image URL from `BaseURL` + relative path) belongs as a method on that type's mapper or on the domain type itself (see **Prefer domain methods** in the project skill), not as a free-standing local helper or an inlined expression. "It's only one line" justifies inlining a *guard*, never a *mapping*.
@@ -905,7 +1027,68 @@ func (s *Integration) TxStatus(ctx context.Context, req *TxStatusRequest) (TxSta
 // Caller: service.TxStatus(ctx, req)
 ```
 
+### Repository access respects domain boundaries (MUST FOLLOW)
+
+A service owns the repositories (DAOs/storages) of **its own domain** and may
+talk to them directly. It must **not** reach into a repository owned by
+**another** domain — one a different service is responsible for. Depend on that
+other **service** and go through it.
+
+- **Same domain → repositories directly.** A service composing several
+  repositories/storages that all belong to its own domain is fine and
+  expected — that's what the service layer is for. Don't invent a wrapper
+  service just to "go through a service"; same-domain direct access is correct.
+- **Different domain → inject the owning service, never its repository.** When
+  the data is managed by another service, that service is the only thing allowed
+  to touch its repositories. Reaching past it into its DAO couples you to a
+  schema you don't own, duplicates its invariants and error mapping, and rots
+  silently when the owner changes its storage. Inject the service, call its
+  methods.
+
+Why: the owning service is where that domain's rules, error translation, and
+invariants live. Bypassing it to hit the DAO scatters those rules across
+callers and breaks the moment the owner changes how it persists.
+
+```go
+// Bad - BackupService (backup domain) reaches into repositories owned by
+// the lockbox and account-limit domains.
+type BackupService struct {
+    passRepo      PassRepository        // own domain  - ok
+    deletionRepo  DeletionRepository    // own domain  - ok
+    attachmentDAO LockboxAttachmentDAO  // ❌ lockbox domain - owned by LockboxService
+    limitDAO      AccountLimitDAO       // ❌ limits domain  - owned by AccountLimitService
+}
+
+// Good - own-domain repos stay direct; other domains come through their service.
+type BackupService struct {
+    passRepo       PassRepository       // own domain  - direct
+    deletionRepo   DeletionRepository   // own domain  - direct
+    lockboxService LockboxService       // ✅ other domain - via its service
+    limitService   AccountLimitService  // ✅ other domain - via its service
+}
+```
+
+If the owning service doesn't expose what you need, add a method to it (see
+**Service Encapsulation** above) rather than reaching past it into its
+repository.
+
 ## Testing
+
+### Test-first vs implementation-first (MUST FOLLOW)
+
+**TDD (write the failing test first) applies to BUG FIXES ONLY.** A bug means the
+behaviour already exists and is wrong — there a failing test reproduces it, proves
+the fix, and guards the regression. Write that test first, watch it fail, then fix.
+
+**New logic (features, new methods, new endpoints) is implementation-first.**
+Write the code, then cover it with tests. Do NOT invoke
+`superpowers:test-driven-development` for new functionality, and do NOT stall the
+implementation behind a red-test ritual (or behind services that must be started
+just to watch a test fail). Ship the logic, then test it.
+
+Both paths end with tests. Only the order differs, and the order is decided by
+one question: **does the behaviour already exist and misbehave?** Yes → test
+first. No → code first.
 
 ### Unit Tests
 

@@ -18,6 +18,32 @@ This skill **only** edits skills owned by the `sadensmol` plugin (i.e. `sadensmo
 
 If the knowledge belongs outside the sadensmol namespace, **stop** and tell the user where it should go instead — do not edit it here. Example: "That's project-specific — update the project's own skill in its repo, not here."
 
+## General vs project-specific (decide BEFORE editing)
+
+The general sadensmol skills (`go-programming`, `typescript-programming`,
+`dart-programming`, `github`, `linear`, …) hold ONLY knowledge that is reusable
+across every project. **Project/product-specific knowledge must NOT be inlined
+into a general skill.**
+
+Tell-tale signs a learning is project-specific (→ belongs in that project's own
+skill, which is out of scope here): it names a specific repo, service, deploy
+pipeline, environment, auth profile, business entity, or workflow — e.g. a
+particular e2e suite, `AWS_PROFILE=<project>`, a named game/currency, a
+`task finish` step, a specific CI workflow.
+
+Route by which parts are general vs specific:
+
+- **Purely general** → integrate into the matching general sadensmol skill.
+- **Purely project-specific** → STOP; tell the user it belongs in the project's
+  own skill (e.g. `swipegames:swipegames` / `swipegames:task`), not here.
+- **Both** → split. Put the *general principle* in the general skill and have it
+  **point to the project-specific skill** for the concrete mechanics — never
+  embed the project's commands/env/entities in the general skill. Example: a
+  generic "to debug a test against a deployed env, run it locally" principle goes
+  in `go-programming`/`go-integration-tests` ONLY as "follow the project's own
+  skill for how to run it"; the actual `AWS_PROFILE=…`, env names, and CI steps
+  live in the project skill.
+
 ## Workflow
 
 ### 1. Identify Destination (must be a sadensmol skill)
@@ -48,7 +74,18 @@ Before editing, always read the target file to:
 
 **For skills with references/**: Check if the knowledge fits better in a reference file than SKILL.md. Long skills should keep SKILL.md lean.
 
-### 3. Integrate
+### 3. Propose + get approval (MUST FOLLOW — before ANY edit)
+
+For **every** change to a skill, first clearly state:
+- **Which skill/file** will be edited.
+- **What the change is about** — the learning being captured, in 1–3 lines.
+- **Where it goes** (section) and roughly what the added text says.
+
+Then ask for approval via `AskUserQuestion` — options: **apply** / **skip**.
+Edit only after an explicit "apply". Multiple changes → per-item approval.
+A skipped item is dropped without comment. Never edit skills silently.
+
+### 3a. Integrate (after approval)
 
 Edit the target file:
 - Match existing style (heading levels, formatting, code style)

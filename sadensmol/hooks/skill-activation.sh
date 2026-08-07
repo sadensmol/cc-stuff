@@ -1,21 +1,25 @@
 #!/bin/sh
-# UserPromptSubmit hook — router activator.
+# UserPromptSubmit hook — router injector.
 #
-# Fires on EVERY request. Its sole job is to tell Claude to ensure the
-# sadensmol:router skill is loaded before doing anything else.
+# Fires on EVERY request. Injects the FULL sadensmol:router SKILL.md into
+# context every turn, so the routing rules are ALWAYS present regardless of
+# whether the Skill tool was ever invoked. This closes the failure mode where
+# Claude assumes "a router already ran" and skips the routing pass — leaving
+# downstream skills (go-programming, typescript-programming, …) unloaded.
 #
-# Deliberately dependency-free (no jq) and stateless (no session marker)
-# so it is guaranteed to run in any environment, on every prompt. The
-# router itself, and the instruction below, skip redundant work when the
-# skill is already loaded — so re-firing each turn is cheap.
+# Portable + dependency-free: resolves the router via $CLAUDE_PLUGIN_ROOT, so
+# it works on any machine where the plugin is installed. No jq, no session
+# marker — guaranteed to run on every prompt.
 
-cat <<'EOF'
-<SKILL_ACTIVATION_REQUIRED priority="override-default-behavior">
+ROUTER="${CLAUDE_PLUGIN_ROOT}/skills/router/SKILL.md"
 
-EXTREMELY IMPORTANT: Ensure the `sadensmol:router` skill is active BEFORE doing anything else in this turn. It detects your working context (cwd, project type, prompt intent) and routes you to the appropriate downstream skills (Go, TypeScript, Dart/Flutter, project-specific skills, etc.).
+printf '%s\n\n' '<SKILL_ACTIVATION_REQUIRED priority="override-default-behavior">'
+printf '%s\n\n' 'EXTREMELY IMPORTANT: The sadensmol:router rules are reproduced IN FULL below and are therefore ALWAYS in context. Evaluate them against the current cwd and prompt NOW, and invoke (via the Skill tool) EVERY downstream skill they name that is not already loaded — BEFORE reading files, editing, running tools, or answering. A different router having run is NOT this router having run; never assume routing is already handled or was cached.'
 
-- If `sadensmol:router` is NOT yet loaded in this conversation, invoke it via the Skill tool now, BEFORE: reading files, using other tools, responding to the user, asking clarifying questions, or running agents.
-- If `sadensmol:router` IS already loaded, do NOT call the Skill tool again — just follow its rules against the current cwd and prompt.
+if [ -f "$ROUTER" ]; then
+  cat "$ROUTER"
+else
+  printf '%s\n' 'router SKILL.md not found at CLAUDE_PLUGIN_ROOT — invoke the `sadensmol:router` skill via the Skill tool now if it is not already loaded.'
+fi
 
-</SKILL_ACTIVATION_REQUIRED>
-EOF
+printf '\n%s\n' '</SKILL_ACTIVATION_REQUIRED>'

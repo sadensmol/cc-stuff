@@ -42,6 +42,7 @@ Ask the user:
    - This is a learning series — the article title must follow the format: `Learning System Design #<N>: <Topic>`
    - To determine `<N>`: scan existing posts in `content/posts/` for files matching `*learning-system-design*` and count them — the new article is the next number
    - The slug should be: `learning-system-design-<N>-topic-name` (e.g. `learning-system-design-1-how-http-works`)
+   - **Intro opener**: start the article body with the `#N` numeral form, e.g. `Part #12 of the "Learning System Design" series!` — NEVER spell out the ordinal ("Twelfth part", "Second article")
    - Extract the specific topic/theme from the repo content (README, folder structure, code)
 4. If it's any other git repo — use the repo description, README, and code to understand the topic, then proceed normally
 
@@ -209,6 +210,13 @@ Present the article to the user for review. Offer to:
 - Add code examples
 - Modify social media posts (LinkedIn/X.com/Threads)
 
+**Terminology — do NOT say "published".** Creating the `.md` file (even with
+`draft = false`) only means it will appear on the *next build*. The file is
+still **uncommitted and undeployed**. When reporting back, say the post/draft
+was *created* or *written* — never "published" or "live". Never run
+`git add`/`git commit` (the user commits on their own); if helpful, you may list
+the new/changed paths so they can stage them.
+
 ## Important Rules
 
 - NEVER copy source content verbatim — always rewrite from scratch in sadensmol's voice
@@ -223,3 +231,5 @@ Present the article to the user for review. Offer to:
 - Always generate LinkedIn, X.com, and Threads posts after writing the article
 - Always include source/reference links when article is based on external content
 - For `learning_*` repos (e.g. `learning_system-design`), always use the series title format: `Learning System Design #<N>: <Topic>` — auto-detect the part number from existing posts
+- Series intro opener uses the `#N` numeral (e.g. `Part #12 of the ... series!`), never a spelled-out ordinal
+- Creating the file is NOT publishing — `draft = false` just queues it for the next build; the file stays uncommitted/undeployed. Never claim a post is "published" or "live"

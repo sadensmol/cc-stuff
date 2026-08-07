@@ -155,6 +155,24 @@ Allowed: Entity relationships, state transitions, event flows, integration point
 
 ---
 
+## Reviewing Design Documents
+
+When the user asks to **review** the design document(s) you produced
+(requirements, plan, supporting docs, ADRs), do NOT just paste them as text —
+open them for inline annotation with **plannotator annotate**:
+
+```bash
+/Users/saden/.local/bin/plannotator annotate <file-or-folder>
+```
+
+- Pass a single doc (`docs/plans/{date}.md`) or the whole `docs/` folder to
+  review several at once.
+- Run it in the background; it blocks until the user submits annotations, then
+  returns them. Address each annotation and re-open if needed. No annotations =
+  approved.
+
+---
+
 ## Common Rationalizations (DON'T DO THESE)
 
 | Excuse | Reality |
