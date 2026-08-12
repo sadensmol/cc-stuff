@@ -162,7 +162,8 @@ When the user asks to **review** the design document(s) you produced
 open them for inline annotation with **plannotator annotate**:
 
 ```bash
-/Users/saden/.local/bin/plannotator annotate <file-or-folder>
+PLANNOTATOR="${PLANNOTATOR:-$(command -v plannotator || echo "$HOME/.local/bin/plannotator")}"
+"$PLANNOTATOR" annotate <file-or-folder>
 ```
 
 - Pass a single doc (`docs/plans/{date}.md`) or the whole `docs/` folder to

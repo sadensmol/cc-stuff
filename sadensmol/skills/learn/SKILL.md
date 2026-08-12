@@ -35,7 +35,7 @@ Route by which parts are general vs specific:
 
 - **Purely general** → integrate into the matching general sadensmol skill.
 - **Purely project-specific** → STOP; tell the user it belongs in the project's
-  own skill (e.g. `swipegames:swipegames` / `swipegames:task`), not here.
+  own skill (`<project>:<project>` / `<project>:task`), not here.
 - **Both** → split. Put the *general principle* in the general skill and have it
   **point to the project-specific skill** for the concrete mechanics — never
   embed the project's commands/env/entities in the general skill. Example: a

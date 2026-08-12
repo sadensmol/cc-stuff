@@ -1,15 +1,22 @@
 ---
 name: task
-description: "Single entry point for project task/worktree management across the personal plugins. Dispatches `/task <subcommand>` to the correct project's task skill (memoresse:task, swipegames:task, …) based on the active agterm workspace (authoritative) or the cwd. Use when the user says: \"task new <branch>\", \"new task\", \"task plan\", \"task list\", \"task switch\", \"task zed\", \"task code\", \"task console\", \"task review\", \"task finish\", \"task cleanup\", \"create worktree\", or a bare \"/task …\". Forwards all arguments verbatim to the resolved project skill — it never runs task work itself."
+description: "Single entry point for project task/worktree management across the personal plugins. Dispatches `/task <subcommand>` to the correct project's task skill (`<project>:task`) based on the active agterm workspace (authoritative) or the cwd. Use when the user says: \"task new <branch>\", \"new task\", \"task plan\", \"task list\", \"task switch\", \"task zed\", \"task code\", \"task console\", \"task review\", \"task finish\", \"task cleanup\", \"create worktree\", or a bare \"/task …\". Forwards all arguments verbatim to the resolved project skill — it never runs task work itself."
 ---
 
 # Task (dispatcher)
 
 `/task` is the **single visible** task entry across the personal plugins. The
-per-project implementations (`memoresse:task`, `swipegames:task`, …) are hidden
-from the `/` menu via `user-invocable: false` and are reached **only** through
-this dispatcher (or by the model directly, since `Skill(<plugin>:task)` still
-works on a hidden skill).
+per-project implementations (`<project>:task`) are hidden from the `/` menu via
+`user-invocable: false` and are reached **only** through this dispatcher (or by
+the model directly, since `Skill(<plugin>:task)` still works on a hidden skill).
+
+**This skill knows NOTHING about any specific project (MUST FOLLOW).** No project
+name, repo name, workspace name, path, tracker or issue prefix ever appears here —
+it is published, generic, and resolves everything at runtime (Step 2). Whatever it
+handles itself, it handles **generically**, from the cwd alone. Anything that needs
+repository knowledge is **passed down** to the project skill, never reimplemented
+here. If you find yourself wanting to special-case a project in this file, that
+logic belongs in that project's plugin.
 
 Your job: detect which project this session belongs to, then invoke that
 project's `:task` skill via the `Skill` tool, **forwarding the user's arguments
@@ -42,28 +49,67 @@ fi
 echo "--- cwd ---"; pwd
 ```
 
-The **agterm workspace name**, when present, is *authoritative* — a session
-lives under a named workspace (`memoresse`, `swipegames`, …) that reflects the
-project even when the cwd has wandered (e.g. editing skill sources under
-`work_memoresse` / `work_swipegames`). Prefer it over the cwd path.
+The **agterm workspace name**, when present, is *authoritative* — a session lives
+under a workspace named after its project, which stays correct even when the cwd
+has wandered (e.g. editing the project's skill sources under a `work_<project>`
+checkout rather than the project itself). Prefer it over the cwd path.
 
 ## Step 2 — resolve to a project skill
 
-Check in priority order (workspace wins; cwd path is the fallback when the
-workspace is `(unknown)` / `(not in agterm)`). The **project root** column is the
-directory holding `.worktrees/` — the dispatcher needs it for `list` / `switch`,
-which run from anywhere (not just inside a worktree):
+Resolution is **data-driven** — no project is named in this file. You are looking
+for one thing: the **plugin namespace** `<project>`, which then gives you
+`<project>:task`. Check in priority order (workspace wins; the cwd is the fallback
+when the workspace is `(unknown)` / `(not in agterm)`):
 
-| Signal | Resolves to | Project root (for `list`/`switch`) |
-|---|---|---|
-| agterm workspace `memoresse`, OR cwd contains `/memoresse` or `/work_memoresse` | `memoresse:task` | `/Users/saden/work/memoresse` |
-| agterm workspace `swipegames`, OR cwd contains `/swipegames` or `/work_swipegames` | `swipegames:task` | `/Users/saden/work/swipegames` |
-| any OTHER named workspace, or no match at all | **no project task flow** — STOP | — |
+**1. agterm workspace name.** A workspace is named after its project, and the
+plugin carries that same name — so workspace `<name>` resolves directly to
+`<name>:task`. No lookup needed.
 
-If nothing matches (a plain personal session, or a named workspace with no
-`:task` impl), STOP and tell the user: `/task` needs to run inside a project
-workspace (currently `memoresse` or `swipegames`) — no personal task flow
-exists. Do not guess a project.
+**2. cwd, via the local routes file.** The same **local, unpublished** config the
+router uses maps cwd substrings to project skills, so project names live there and
+never here:
+
+```bash
+pwd | sed 's|/work_|/|g'                          # normalize a work_<project> skill-source checkout
+cat ~/.claude/sadensmol-router-routes.json 2>/dev/null
+```
+
+It is a JSON array of `{ "cwd": "<substring>", "skill": "<plugin>:<skill>" }`. Take
+the entry whose `cwd` substring appears in the **normalized** path; its plugin
+namespace (the part before `:`) is `<project>`. The `sed` normalization is what
+makes a `work_<project>` checkout — where you edit the project's skill sources
+rather than the project — resolve to the same plugin, without this file knowing any
+project's name.
+
+**3. No match → STOP.** A plain personal session, an unrecognized workspace, a
+resolved plugin with no `:task` skill (the `Skill` call fails), or a route that
+resolves to the **`sadensmol` namespace itself** (that is this dispatcher — never
+dispatch to it, you would loop) all mean the same thing: `/task` needs to run inside
+a project workspace, and no personal task flow exists. Say so and ask which project
+— never guess one.
+
+### Project root — derived from the cwd, never hardcoded (MUST FOLLOW)
+
+`list` / `switch` operate on the **project root** (the directory that holds
+`.worktrees/`). Derive it from the cwd — that is the only source; this skill knows
+no paths and asks no one for any:
+
+```bash
+cwd="$(pwd)"; root=""
+case "$cwd" in */.worktrees/*) root="${cwd%%/.worktrees/*}" ;; esac
+if [ -z "$root" ]; then                      # not in a worktree: walk up to the dir holding .worktrees/
+  d="$cwd"
+  while [ "$d" != "/" ]; do
+    [ -d "$d/.worktrees" ] && { root="$d"; break; }
+    d="$(dirname "$d")"
+  done
+fi
+echo "${root:-NO_ROOT}"
+```
+
+On `NO_ROOT` the session is simply outside the project tree: tell the user to run
+`list` / `switch` from inside the project (or any of its worktrees) and stop. Never
+guess a path, and never ask a skill to hand you one.
 
 ## Step 3 — delegate, or handle here
 
@@ -77,8 +123,8 @@ from Step 2.
 argument string** the user gave `/task` (subcommand + args) **verbatim** as the
 skill's args. Examples:
 
-- `/task new DEV-178 DEV-135` → invoke `memoresse:task` with args `new DEV-178 DEV-135`
-- `/task finish` → invoke `swipegames:task` with args `finish`
+- `/task new ABC-XXX ABC-YYY` → invoke `<project>:task` with args `new ABC-XXX ABC-YYY`
+- `/task finish` → invoke `<project>:task` with args `finish`
 - bare `/task` (no args) → invoke the resolved skill with no args (it defaults to `new` per its own rules)
 
 Do not re-interpret, expand, or execute a **delegated** subcommand yourself. The
@@ -89,11 +135,11 @@ project skill owns `new` / `plan` / `finish` / `cleanup`; `zed` / `code` /
 branch name, never the URL slug (MUST FOLLOW).** When `/task new <url>` gets a
 Linear (or similar) issue URL, do NOT derive the branch by slugifying the URL
 path: issue titles use `|` separators, which the URL slug renders as `-or-`
-junk (`.../ENG-1930/be-or-spribe-integration-or-inbound-...` →
-`eng-1930-be-or-spribe-integration-or-...` — wrong). Use the issue's canonical
+junk (`.../PROJ-XXX/be-or-acme-integration-or-inbound-...` →
+`proj-xxx-be-or-acme-integration-or-...` — wrong). Use the issue's canonical
 `gitBranchName` instead: fetch the issue via the tracker skill
 (`get_issue`/`save_issue` responses include `gitBranchName`, e.g.
-`eng-1930-be-spribe-integration-inbound-game-launch-session-auth`) and pass
+`proj-xxx-be-acme-integration-inbound-session-auth`) and pass
 THAT to the project skill. Deriving from the slug creates a second, differently
 named worktree for the same ticket the moment anyone uses the real branch name.
 
@@ -112,7 +158,7 @@ First derive the worktree base **and** the trust root (the parent of
 cwd="$(pwd)"
 case "$cwd" in
   */.worktrees/*)
-    root="${cwd%%/.worktrees/*}"                  # e.g. /Users/saden/work/memoresse
+    root="${cwd%%/.worktrees/*}"                  # the project root (dir holding .worktrees/)
     branch="${cwd#*/.worktrees/}"; branch="${branch%%/*}"
     base="$root/.worktrees/$branch"               # the worktree base dir
     ;;
@@ -123,9 +169,8 @@ esac
 If it prints `NOT_IN_WORKTREE`, tell the user `zed`/`code` must be run from
 inside a worktree, and stop.
 
-Then choose what to open — works for single-repo (memoresse) and multi-repo
-(swipegames) worktrees alike (`*/` matches only dirs, so hidden `.claude` and the
-`PLAN.md` file are excluded):
+Then choose what to open — works for single-repo and multi-repo worktrees alike
+(`*/` matches only dirs, so hidden `.claude` and the `PLAN.md` file are excluded):
 
 ```bash
 first=""; count=0
@@ -242,13 +287,13 @@ fi
 Then pick `proj` from that output:
 
 - **0 repos** → keep `proj="$base"` (it really is a bare dir).
-- **1 repo** → `proj="$base/<that repo>"` (single-repo worktree, e.g. memoresse —
-  open it, no prompt).
+- **1 repo** → `proj="$base/<that repo>"` (single-repo worktree — open it, no
+  prompt).
 - **2+ repos, exactly 1 changed** → `proj="$base/<the changed repo>"` — that's the
   repo being worked on; open it, no prompt.
 - **2+ repos, 0 or 2+ changed** → genuinely ambiguous, so **ask** with
   `AskUserQuestion` which repo to open: list the repos with the **changed** ones
-  first, labelled (e.g. `platform-integration-spribe (changes)`), plus a final
+  first, labelled (e.g. `platform-integration-acme (changes)`), plus a final
   `open the base (all repos)` option that maps to `proj="$base"`. Set
   `proj="$base/<pick>"` from the answer.
 
@@ -276,10 +321,20 @@ the user `console` needs agterm (or tmux) and stop.
 
 ## Plannotator binary (shared)
 
-The `plannotator` binary lives at `/Users/saden/.local/bin/plannotator`. It may
-not be on PATH in spawned sessions — always invoke it by this absolute path.
+`plannotator` may not be on PATH in spawned sessions, so **never type a bare
+`plannotator`** — resolve it inside the same command, with an env override first
+and `~/.local/bin` as the conventional fallback:
+
+```bash
+PLANNOTATOR="${PLANNOTATOR:-$(command -v plannotator || echo "$HOME/.local/bin/plannotator")}"
+[ -x "$PLANNOTATOR" ] || echo "PLANNOTATOR_NOT_FOUND"
+```
+
 Every `plannotator …` command below (and in the project skills' `plan` step)
-means `/Users/saden/.local/bin/plannotator …`.
+means `"$PLANNOTATOR" …` with that resolution inlined — shell state does not
+survive between `Bash` calls, so repeat the assignment in each command. On
+`PLANNOTATOR_NOT_FOUND`, tell the user to install it or to export `PLANNOTATOR`,
+and stop — do not guess another path.
 
 ## Review checkpoint — stop after code changes (MUST FOLLOW)
 
@@ -292,8 +347,8 @@ Every time you finish a batch of code changes, **STOP before committing / before
   change exists, or a `plannotator annotate <file.md>` when the change is only a
   plan/docs (`.md`) — because `review` can't render mermaid/tables (see the
   `review` section). plannotator ≥ 0.21 auto-discovers every nested repo, so this
-  is the native path for single-repo (memoresse) AND multi-repo (swipegames)
-  worktrees — no per-repo loop, no external diff tool. **A docs-only task (e.g.
+  is the native path for single-repo AND multi-repo worktrees alike — no per-repo
+  loop, no external diff tool. **A docs-only task (e.g.
   an R&D report) is therefore checkpointed with `annotate`, not `review`.**
 
 Then wait for the user, or address the annotations, before continuing. Going
@@ -377,9 +432,9 @@ plan, you are in the wrong phase: **STOP and ask**, don't implement.
 When `review` finishes — approved, no annotations, or annotations addressed — do
 NOT end by proposing `cleanup` (or "want me to remove the worktree?") as a next
 step. `cleanup` is appropriate ONLY once the task is fully done: every PR for the
-branch **merged** (not just approved) — for swipegames that includes the
-`e2e-api-tests` PR / its dev regression run being green — and no outstanding
-work. If any PR is still open or any work is left (implementation, `finish`,
+branch **merged** (not just approved) — including whatever extra gate the project
+skill defines as part of its definition-of-done (e.g. an end-to-end test PR and
+its regression run being green) — and no outstanding work. If any PR is still open or any work is left (implementation, `finish`,
 merges, e2e), cleanup must not be mentioned at all — the natural next step is
 `finish` (or continuing the work), never cleanup. Only surface `cleanup` when
 nothing is left to merge and nothing is left to do, or when the user asks for it
@@ -393,15 +448,19 @@ in-progress annotations in it are LOST) — a hard plannotator constraint, not j
 tab clutter. So never have two open at once: not review+review, not
 annotate+annotate, and **not review+annotate together**.
 
-**NEVER force-close another plannotator instance (MUST FOLLOW).** Do NOT `pkill`
-/ kill / `session close` a running `review` or `annotate` to make room for a new
-one — the user may have unsubmitted annotations in it, and force-closing
-**discards all of that work**. Instead, whenever one is already open and you need
-a different one (or the same one refreshed): **ask the user to finish (submit) or
-close the current review/annotation, and WAIT until it is actually closed**
-(`pgrep` shows none) before launching. This holds even on an explicit
-"reopen"/"restart"/"refresh" — ask the user to close it first; never close it for
-them.
+**Force-closing another plannotator instance requires explicit USER PERMISSION (MUST FOLLOW).**
+Do NOT `pkill` / kill / `session close` a running `review` or `annotate` on your
+own — the user may have unsubmitted annotations in it, and force-closing
+**discards that work**. When one is already open and you need a different one (or
+the same one refreshed), use `AskUserQuestion` to let the user decide:
+- **Force-close & open new** — the user authorizes it (e.g. the open tab is
+  stale/orphaned or belongs to another session). Only then may you
+  `pkill -f "plannotator (review|annotate)"`, confirm it is closed (`pgrep` shows
+  none), and launch the new one.
+- **Keep existing** — do NOT close it; the user finishes/inspects the current
+  review, tells you when it is closed, and you launch then.
+Default: never force-close unprompted; act only on the user's explicit choice.
+This holds even on an explicit "reopen"/"restart"/"refresh".
 
 The launch blocks until submit — a completion/`failed` notification usually just
 means the user closed the tab, NOT that the cwd was wrong; do not react by
@@ -413,17 +472,19 @@ Check whether one is already running before launching (either mode):
 pgrep -f "plannotator (review|annotate)" >/dev/null 2>&1 && echo "ALREADY_RUNNING" || echo "NONE"
 ```
 
-- **`ALREADY_RUNNING`** → do NOT launch another and do NOT force-close it. Tell
-  the user a review/annotation is already open and **ask them to finish (submit)
-  or close it first**; wait until `pgrep` reports none, then launch exactly one.
-  Never `pkill` it yourself — that would lose their in-progress annotations.
+- **`ALREADY_RUNNING`** → do NOT launch a second one. Ask the user
+  (`AskUserQuestion`) whether to **force-close the existing** review/annotation
+  and open a new one, or **keep** it and wait until they close it themselves.
+  `pkill` ONLY after the user picks force-close; then confirm `pgrep` shows none
+  and launch exactly one. Never force-close on your own initiative.
 - **`NONE`** → launch exactly one instance, in the **mode chosen above**:
 
 ```bash
+PLANNOTATOR="${PLANNOTATOR:-$(command -v plannotator || echo "$HOME/.local/bin/plannotator")}"
 # CODE=1 (real, non-markdown code changed) → code-diff review:
-cd <worktree-base> && pwd && /Users/saden/.local/bin/plannotator review
+cd <worktree-base> && pwd && "$PLANNOTATOR" review
 # OR — markdown only → annotate the chosen .md (PLAN.md, or the file the user picked):
-cd <worktree-base> && pwd && /Users/saden/.local/bin/plannotator annotate <chosen.md>
+cd <worktree-base> && pwd && "$PLANNOTATOR" annotate <chosen.md>
 ```
 
 `annotate` takes exactly **one** `.md` path (resolved relative to the worktree
@@ -506,10 +567,15 @@ Display as a numbered list. If none, say "No worktrees found."
    frontmatter (so it stays out of the `/` menu but remains `Skill()`-callable).
    It implements only `new` / `plan` / `finish` / `cleanup` (+ its own preflight,
    layout, definition-of-done); `review` / `list` / `switch` / `zed` / `code` /
-   `console` are owned here.
-2. Add a row to the Step 2 table mapping its agterm workspace name / cwd
-   substring to `<plugin>:task` **and** its project root (the dir holding
-   `.worktrees/`).
+   `console` are owned here and need nothing from it.
+2. Name the agterm workspace after the plugin — that alone makes Step 2 resolve
+   it, with no edit to this file.
+3. For cwd-based resolution outside agterm, add an entry to the **local, unpublished**
+   `~/.claude/sadensmol-router-routes.json` (`{ "cwd": "<substring>", "skill":
+   "<plugin>:<skill>" }`). **Nothing is added to this file** — no project name, no
+   path, no row. This skill is published and stays generic; the routes file and the
+   project's own plugin hold every project-specific value.
 
 That's the whole contract — one visible `/task`, N hidden per-project impls, with
-the project-agnostic subcommands centralized here.
+the project-agnostic subcommands centralized here and zero project knowledge in
+this file.

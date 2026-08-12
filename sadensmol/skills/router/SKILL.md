@@ -14,7 +14,7 @@ is most often violated across ALL projects: **if the session cwd is under
 `…/.worktrees/<branch>/`, then EVERY path you touch and EVERY command's working dir
 for the WHOLE session MUST stay under that worktree base. NEVER `cd` to or edit a
 primary checkout — a repo path with no `/.worktrees/<branch>/` segment (e.g.
-`/Users/saden/work/<project>/<repo>/…`) is a different branch (often the default
+`<project-root>/<repo>/…`) is a different branch (often the default
 branch or a stranger's WIP), so your work silently lands in the wrong place and the
 task branch/PR shows nothing.** This binds ALL work (edits, `git`, builds, `make`,
 `sops`, grep), not only the `task` flow, and regardless of which downstream skill is
@@ -34,7 +34,7 @@ Run this routing pass at the start of the session AND re-check it on every later
 
 **Concrete failures (these have happened — don't repeat):**
 
-1. *"I recognize this cwd, I'll skip the find."* At session start, ran only `pwd` + `cat ~/.claude/sadensmol-router-routes.json`. Section A matched a project-specific skill (e.g. `swipegames:swipegames`) and routing was declared done. Section B never got the `find` output it needed, so `sadensmol:go-programming` and `sadensmol:go-integration-tests` were never loaded. Eight turns of Go editing happened before the user caught the gap. **Rule:** prior knowledge of the cwd is exactly what the bash block exists to override. Familiarity is not a substitute for evidence — run the full block every time.
+1. *"I recognize this cwd, I'll skip the find."* At session start, ran only `pwd` + `cat ~/.claude/sadensmol-router-routes.json`. Section A matched a project-specific skill (a `<project>:<project>` dev skill) and routing was declared done. Section B never got the `find` output it needed, so `sadensmol:go-programming` and `sadensmol:go-integration-tests` were never loaded. Eight turns of Go editing happened before the user caught the gap. **Rule:** prior knowledge of the cwd is exactly what the bash block exists to override. Familiarity is not a substitute for evidence — run the full block every time.
 
 2. *"Some other router already ran, so I'm routed."* Another skill's router was invoked from its own hook and loaded its project skill. The main loop then treated the routing hooks as collectively satisfied and **never invoked `sadensmol:router` at all** — so Section B never ran and `sadensmol:go-programming` / `sadensmol:go-integration-tests` were never loaded. A whole task's worth of Go was written missing the language rules (`fmt.Sprintf` over `+`, comment discipline, mapper pattern) before the user caught it. **Rule:** every router has its OWN hook that fires on EVERY request — a *different* router having run is NOT this router having run. On every request, check each router's hook independently and load any that isn't loaded. Never assume one router covers another; routers know nothing about each other.
 
@@ -108,12 +108,12 @@ If the user's prompt mentions Linear in any form:
 
 - the literal word `linear` or `Linear`
 - a `linear.app/...` URL
-- a Linear issue identifier matching `[A-Z]+-\d+` (e.g. `ENG-1276`, `PROJ-42`)
+- a Linear issue identifier matching `[A-Z]+-\d+` (e.g. `PROJ-XXX`, `ENG-XXX`)
 - task-management intent in a ticketing context: `my tasks`, `assigned to me`, `in progress`, `update ticket`, `update issue`, `add subtask`, `reassign`, `change status`, `mark done`, `in review`
 
 → invoke `sadensmol:linear` (workspace-agnostic mechanics).
 
-Project-specific Linear conventions (team names, status names, branch mapping, task-title format, description style) live in plugin skills, not here. The local routes file (Step A) and the per-plugin routers (`swipegames:router`, `memoresse:router`) handle layering those on top — `sadensmol:linear` stays workspace-agnostic.
+Project-specific Linear conventions (team names, status names, branch mapping, task-title format, description style) live in plugin skills, not here. The local routes file (Step A) and the per-plugin routers (`<project>:router`) handle layering those on top — `sadensmol:linear` stays workspace-agnostic.
 
 #### E. Intent-based (Jira)
 
@@ -121,7 +121,7 @@ If the user's prompt mentions Jira in any form:
 
 - the literal word `jira` or `Jira`
 - an `*.atlassian.net/...` URL
-- a Jira issue key in a project known to use Jira (e.g. memoresse `DEV-\d+`)
+- an issue key matching `[A-Z]+-\d+` in a project whose tracker is Jira (the project's own skill says which tracker it uses)
 - ticketing intent (`update ticket`, `move to in progress`, `sprint`, `backlog`, JQL) in a Jira context
 
 → invoke `sadensmol:jira` (REST-only: drives the Jira Cloud REST API via `curl`,
@@ -148,28 +148,27 @@ If the prompt is ambiguous between Linear and Jira (a bare `[A-Z]+-\d+` identifi
 #### F. Shared skill names across the personal plugins (bare-name disambiguation)
 
 `linear`, `router` (and, in the project plugins, `task`) are skill names that
-exist in more than one personal plugin (`sadensmol`, `swipegames`, `memoresse`),
-so a bare `/<name>` (or `<name> <args>` typed as plain text) is ambiguous and the
-harness may tie-break to the wrong one. This is **not `linear`-specific** — the
-rule below covers any current or future shared name. Resolve by the session's
-workspace:
+exist in more than one personal plugin, so a bare `/<name>` (or `<name> <args>`
+typed as plain text) is ambiguous and the harness may tie-break to the wrong one.
+This is **not `linear`-specific** — the rule below covers any current or future
+shared name. Resolve by the session's workspace, writing `<project>` for the
+plugin that owns it:
 
-| Bare name | swipegames session | memoresse session | plain personal / other |
-|---|---|---|---|
-| `task` | `swipegames:task` | `memoresse:task` | — (sadensmol has no `task`) |
-| `linear` | `swipegames:linear` (+ `sadensmol:linear` base) | `sadensmol:linear` | `sadensmol:linear` |
-| `router` | `swipegames:router` | `memoresse:router` | `sadensmol:router` |
+| Bare name | project session | plain personal / other |
+|---|---|---|
+| `task` | `<project>:task` | — (sadensmol has no `task`) |
+| `linear` | `<project>:linear` if it defines one (+ `sadensmol:linear` base), else `sadensmol:linear` | `sadensmol:linear` |
+| `router` | `<project>:router` | `sadensmol:router` |
 
 **Rule (general — any shared name), with precedence:** a project (work_) plugin
 **overrides** sadensmol for a colliding name, but builds **on top of** sadensmol's
 base. So:
 
-- If the session belongs to a project workspace (`swipegames` / `memoresse`)
-  whose plugin defines the name → that plugin's version wins; defer to its
-  router (it has its own hook and fires every turn). When the project skill
-  *layers on* the sadensmol base (e.g. `swipegames:linear` over `sadensmol:linear`),
-  **both** load — sadensmol supplies base mechanics, the project skill supplies the
-  overrides.
+- If the session belongs to a project workspace whose plugin defines the name →
+  that plugin's version wins; defer to its router (it has its own hook and fires
+  every turn). When the project skill *layers on* the sadensmol base (e.g.
+  `<project>:linear` over `sadensmol:linear`), **both** load — sadensmol supplies
+  base mechanics, the project skill supplies the overrides.
 - Otherwise (a plain personal / sadensmol session, or the owning project plugin
   doesn't define the name) → the `sadensmol:` version wins; if the harness
   pre-loaded another plugin's `<name>`, override to `sadensmol:<name>`.
@@ -200,7 +199,7 @@ the matching language for ts/dart/flutter projects.
 **A Section A match (project-specific skill) is additive, not a substitute** — it never excuses skipping Section B/C/D. If you can't account for a missing skill against the Step 1 output, you skipped a section. Go back to Step 2 before proceeding.
 
 **Concrete failure (this happened — don't repeat):** Step 1 ran fully and showed
-`go/**/go.mod`. Section A matched a project skill (e.g. `memoresse:memoresse`)
+`go/**/go.mod`. Section A matched a project skill (a `<project>:<project>` dev skill)
 and it was loaded. Then, *without* completing Step 2.5, the next move was to read
 the project skill's reference doc and `grep` across `.go` files to plan a Go
 refactor — `sadensmol:go-programming` was never loaded. The user caught it. **Rule:**
@@ -235,6 +234,7 @@ You don't need to re-run the full Step 1 bash block on drift — just check whet
 - **No matches → no action.** Silently move on to the user's request.
 - **No narration.** Don't tell the user "Loaded skills X, Y, Z." Just do the work.
 - **Don't ask permission.** The user has already opted into this via the hook.
+- **`sadensmol:` skills are the generic layer — project detail lives in the project plugin (MUST FOLLOW).** This marketplace is public, so **no `sadensmol:` skill may hardcode a machine-, user- or project-specific value**: absolute checkout paths (`/Users/<name>/…`, `/home/<name>/…`), home directories, tool install locations, tracker sites, team/issue prefixes, or per-project layout. When such a value is needed, get it in this order: **(1) derive it at runtime** (from the cwd, `$HOME`, `command -v <tool>`), **(2) read it from an env var** (with an override taking precedence, e.g. `${PLANNOTATOR:-…}`), **(3) take it from the project skill** — the `<project>:*` plugin loaded above is the single place project detail is written down, so defer to it, **(4) ask the user.** Never guess a path. When you catch a hardcoded value in a `sadensmol:` skill, replace it with one of those four — do not just work around it.
 - **If the user calls out a missing skill load, fix the rule that missed it.** Don't just load it and move on — edit this `SKILL.md` so the same hole doesn't reopen in the next session.
 - **NEVER invoke `superpowers:test-driven-development` for new logic.** TDD is for **bug fixes only** (the behaviour exists and misbehaves → failing test first). New features/methods/endpoints are **implementation-first**: write the code, then cover it with tests. "A skill exists, so I must load it" is not a reason — the skill's own trigger ("use when implementing any feature") is overridden by this rule. See the *Test-first vs implementation-first* section in `sadensmol:go-programming`.
 

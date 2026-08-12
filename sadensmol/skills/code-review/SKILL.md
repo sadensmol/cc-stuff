@@ -24,7 +24,7 @@ Each agent MUST classify every finding with one of these priorities. Include the
 The 5 review agents do NOT receive language guideline files from this skill (there is no `languages/` folder — skills replace it). Instead, **each agent loads its own skills at the start of its run**, as defined in the agent's own instructions:
 
 1. **Load a language skill for EVERY language in the diff — by file extension, NOT cwd (MUST FOLLOW).** A review diff routinely spans several languages; the cwd is only one of them, so cwd-only routing silently under-loads (a mostly-Flutter diff with a couple of `.go` files would review the Go without `go-programming` and produce findings that violate its rules). Each agent scans the changed paths and loads the matching `sadensmol:` skill for each language present: `*.go` → `go-programming` (+ `go-integration-tests` for Go tests); `*.dart` → `flutter-programming` + `dart-programming`; `*.ts`/`*.tsx` → `typescript-programming`; etc. **Any diff touching even one `.go` file MUST have `go-programming` loaded before findings are reported** — its rules (e.g. NO comment by default, so "add a doc comment" is usually wrong; naming; error handling; mappers) decide whether a finding is valid.
-2. **Run the routing pass too** — also invoke `sadensmol:router` (cwd/project detection) plus any project router whose cwd matches (`swipegames:router`, `memoresse:router`, …) for project-specific conventions. This complements step 1; it does not replace it.
+2. **Run the routing pass too** — also invoke `sadensmol:router` (cwd/project detection) plus any project router whose cwd matches (`<project>:router`) for project-specific conventions. This complements step 1; it does not replace it.
 3. **Load concern-specific skills** — e.g. the testing-reviewer additionally loads `go-integration-tests` when reviewing Go tests.
 
 This skill hands each agent the diff, the commits, and enough context to know what it's reviewing; each agent then loads skills by the diff's languages per the steps above.
@@ -33,9 +33,9 @@ This skill hands each agent the diff, the commits, and enough context to know wh
 
 Projects carry their own PR/commit rules in their **own** skills — this sadensmol skill owns none of those mechanics, it only requires that you **discover and enforce them**. **Before reviewing, run the routing pass yourself** (`sadensmol:router` + any project router whose cwd matches) so the project's conventions are loaded, then look for its PR/commit/branch rules. Examples of where they live:
 
-- `swipegames:linear` — task/PR **title format** (issue-key prefix) and the "description ≠ plan" **description style**.
-- `swipegames:task` — commit/PR shape (one commit per project, a PR per changed repo, the finish flow).
-- `memoresse:*` — living-docs that must be updated in the same change.
+- `<project>:linear` / `<project>:jira` — task/PR **title format** (e.g. an issue-key prefix) and the project's **description style**.
+- `<project>:task` — commit/PR shape (how many commits, how many PRs, the finish flow).
+- `<project>:<project>` (the dev skill) — living docs that must be updated in the same change, and any other repo-wide rule.
 
 Apply whatever the loaded project skills define:
 
